@@ -4,12 +4,14 @@
   import { onMount, onDestroy } from "svelte";
 
   type Liveness = "alive" | "dead" | "unknown";
+  type NetbiosInfo = { name: string; workgroup: string | null };
   type ScanResult = {
     scan_id: string;
     ip: string;
     liveness: Liveness;
     rtt_ms: number | null;
     hostname: string | null;
+    netbios: NetbiosInfo | null;
     open_ports: number[];
   };
   type ScanProgress = { scan_id: string; completed: number; total: number };
@@ -27,9 +29,11 @@
   let portPreset = $state("None");
   let customPorts = $state("");
   let includeDead = $state(false);
+  let doNetbios = $state(true);
   let concurrency = $state(100);
   let pingTimeout = $state(1000);
   let portTimeout = $state(500);
+  let netbiosTimeout = $state(1000);
 
   let scanId = $state<string | null>(null);
   let results = $state<ScanResult[]>([]);
@@ -46,12 +50,16 @@
   const aliveCount = $derived(results.filter((r) => r.liveness === "alive").length);
   const filteredResults = $derived(
     filter.trim()
-      ? results.filter(
-          (r) =>
+      ? results.filter((r) => {
+          const f = filter.toLowerCase();
+          return (
             r.ip.includes(filter) ||
-            (r.hostname ?? "").toLowerCase().includes(filter.toLowerCase()) ||
-            r.open_ports.some((p) => String(p).includes(filter)),
-        )
+            (r.hostname ?? "").toLowerCase().includes(f) ||
+            (r.netbios?.name ?? "").toLowerCase().includes(f) ||
+            (r.netbios?.workgroup ?? "").toLowerCase().includes(f) ||
+            r.open_ports.some((p) => String(p).includes(filter))
+          );
+        })
       : results,
   );
 
@@ -82,9 +90,11 @@
         options: {
           ping: true,
           resolve_hostname: true,
+          netbios: doNetbios,
           ports: parsePorts(),
           ping_timeout_ms: pingTimeout,
           port_timeout_ms: portTimeout,
+          netbios_timeout_ms: netbiosTimeout,
           concurrency,
           include_dead: includeDead,
         },
@@ -102,10 +112,10 @@
   }
 
   function exportCsv() {
-    const header = "ip,liveness,rtt_ms,hostname,open_ports";
+    const header = "ip,liveness,rtt_ms,hostname,netbios_name,workgroup,open_ports";
     const rows = filteredResults.map(
       (r) =>
-        `${r.ip},${r.liveness},${r.rtt_ms ?? ""},${r.hostname ?? ""},${r.open_ports.join(" ")}`,
+        `${r.ip},${r.liveness},${r.rtt_ms ?? ""},${r.hostname ?? ""},${r.netbios?.name ?? ""},${r.netbios?.workgroup ?? ""},${r.open_ports.join(" ")}`,
     );
     const blob = new Blob([header + "\n" + rows.join("\n")], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
@@ -207,6 +217,10 @@
         Show dead hosts
       </label>
       <label class="flex items-center gap-1.5">
+        <input type="checkbox" bind:checked={doNetbios} disabled={isScanning} />
+        NetBIOS
+      </label>
+      <label class="flex items-center gap-1.5">
         Concurrency
         <input type="number" bind:value={concurrency} min="1" max="1000" disabled={isScanning}
           class="w-16 rounded border border-[var(--color-border)] bg-[var(--color-bg)] px-1.5 py-0.5 text-right font-mono" />
@@ -219,6 +233,11 @@
       <label class="flex items-center gap-1.5">
         Port timeout
         <input type="number" bind:value={portTimeout} min="100" max="10000" step="100" disabled={isScanning}
+          class="w-20 rounded border border-[var(--color-border)] bg-[var(--color-bg)] px-1.5 py-0.5 text-right font-mono" /> ms
+      </label>
+      <label class="flex items-center gap-1.5">
+        NetBIOS timeout
+        <input type="number" bind:value={netbiosTimeout} min="100" max="10000" step="100" disabled={isScanning}
           class="w-20 rounded border border-[var(--color-border)] bg-[var(--color-bg)] px-1.5 py-0.5 text-right font-mono" /> ms
       </label>
       <label class="flex flex-1 items-center gap-1.5">
@@ -282,6 +301,7 @@
             <th class="px-4 py-2 text-left">Status</th>
             <th class="px-4 py-2 text-right">RTT</th>
             <th class="px-4 py-2 text-left">Hostname</th>
+            <th class="px-4 py-2 text-left">NetBIOS</th>
             <th class="px-4 py-2 text-left">Open ports</th>
           </tr>
         </thead>
@@ -302,6 +322,16 @@
               </td>
               <td class="px-4 py-1.5 text-right text-[var(--color-text-dim)]">{r.rtt_ms != null ? `${r.rtt_ms} ms` : "—"}</td>
               <td class="px-4 py-1.5 text-[var(--color-text-dim)]">{r.hostname ?? "—"}</td>
+              <td class="px-4 py-1.5">
+                {#if r.netbios}
+                  <span>{r.netbios.name}</span>
+                  {#if r.netbios.workgroup}
+                    <span class="ml-1.5 text-xs text-[var(--color-text-dim)]">/ {r.netbios.workgroup}</span>
+                  {/if}
+                {:else}
+                  <span class="text-[var(--color-text-dim)]">—</span>
+                {/if}
+              </td>
               <td class="px-4 py-1.5">
                 {#if r.open_ports.length > 0}
                   <div class="flex flex-wrap gap-1">

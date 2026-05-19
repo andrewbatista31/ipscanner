@@ -1,4 +1,4 @@
-use crate::scanner::fetchers::{dns, ping, port};
+use crate::scanner::fetchers::{dns, netbios, ping, port};
 use crate::scanner::range;
 use crate::scanner::types::*;
 use futures::stream::{FuturesUnordered, StreamExt};
@@ -116,6 +116,7 @@ async fn scan_one(
 ) -> ScanResult {
     let ping_to = Duration::from_millis(opts.ping_timeout_ms as u64);
     let port_to = Duration::from_millis(opts.port_timeout_ms as u64);
+    let netbios_to = Duration::from_millis(opts.netbios_timeout_ms as u64);
 
     let rtt = if opts.ping {
         tokio::select! {
@@ -135,22 +136,32 @@ async fn scan_one(
     // If ping says dead, skip the rest unless the user wants dead hosts too.
     let do_followup = liveness != Liveness::Dead || opts.include_dead || !opts.ping;
 
-    let hostname = if opts.resolve_hostname && do_followup {
-        tokio::select! {
-            _ = token.cancelled() => None,
-            h = dns::reverse_lookup(ip) => h,
+    // Run follow-up fetchers concurrently — they all use the network independently.
+    let hostname_fut = async {
+        if opts.resolve_hostname && do_followup {
+            dns::reverse_lookup(ip).await
+        } else {
+            None
         }
-    } else {
-        None
+    };
+    let netbios_fut = async {
+        if opts.netbios && do_followup {
+            netbios::query(ip, netbios_to).await
+        } else {
+            None
+        }
+    };
+    let ports_fut = async {
+        if !opts.ports.is_empty() && do_followup {
+            port::probe_ports(ip, &opts.ports, port_to).await
+        } else {
+            Vec::new()
+        }
     };
 
-    let open_ports = if !opts.ports.is_empty() && do_followup {
-        tokio::select! {
-            _ = token.cancelled() => Vec::new(),
-            p = port::probe_ports(ip, &opts.ports, port_to) => p,
-        }
-    } else {
-        Vec::new()
+    let (hostname, nb, open_ports) = tokio::select! {
+        _ = token.cancelled() => (None, None, Vec::new()),
+        out = async { tokio::join!(hostname_fut, netbios_fut, ports_fut) } => out,
     };
 
     ScanResult {
@@ -159,6 +170,7 @@ async fn scan_one(
         liveness,
         rtt_ms: rtt,
         hostname,
+        netbios: nb,
         open_ports,
     }
 }

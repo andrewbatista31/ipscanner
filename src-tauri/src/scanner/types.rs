@@ -1,3 +1,4 @@
+use crate::scanner::fetchers::netbios::NetbiosInfo;
 use serde::{Deserialize, Serialize};
 use std::net::Ipv4Addr;
 use uuid::Uuid;
@@ -6,9 +7,11 @@ use uuid::Uuid;
 pub struct ScanOptions {
     pub ping: bool,
     pub resolve_hostname: bool,
+    pub netbios: bool,
     pub ports: Vec<u16>,
     pub ping_timeout_ms: u32,
     pub port_timeout_ms: u32,
+    pub netbios_timeout_ms: u32,
     pub concurrency: usize,
     pub include_dead: bool,
 }
@@ -18,9 +21,11 @@ impl Default for ScanOptions {
         Self {
             ping: true,
             resolve_hostname: true,
+            netbios: true,
             ports: vec![],
             ping_timeout_ms: 1000,
             port_timeout_ms: 500,
+            netbios_timeout_ms: 1000,
             concurrency: 100,
             include_dead: false,
         }
@@ -48,6 +53,7 @@ pub struct ScanResult {
     pub liveness: Liveness,
     pub rtt_ms: Option<u32>,
     pub hostname: Option<String>,
+    pub netbios: Option<NetbiosInfo>,
     pub open_ports: Vec<u16>,
 }
 
