@@ -13,10 +13,10 @@ pub struct NetbiosInfo {
 // QName is the wildcard "*" encoded as 32 ASCII chars ("CKAA...AA") plus the
 // 0x20 length prefix and 0x00 terminator. QType=0x0021 (NBSTAT), QClass=0x0001.
 const NBSTAT_QUERY: [u8; 50] = [
-    0x12, 0x34, 0x00, 0x10, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x20, b'C', b'K',
-    b'A', b'A', b'A', b'A', b'A', b'A', b'A', b'A', b'A', b'A', b'A', b'A', b'A', b'A', b'A',
-    b'A', b'A', b'A', b'A', b'A', b'A', b'A', b'A', b'A', b'A', b'A', b'A', b'A', b'A', b'A',
-    0x00, 0x00, 0x21, 0x00, 0x01,
+    0x12, 0x34, 0x00, 0x10, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x20, b'C', b'K', b'A',
+    b'A', b'A', b'A', b'A', b'A', b'A', b'A', b'A', b'A', b'A', b'A', b'A', b'A', b'A', b'A', b'A',
+    b'A', b'A', b'A', b'A', b'A', b'A', b'A', b'A', b'A', b'A', b'A', b'A', b'A', 0x00, 0x00, 0x21,
+    0x00, 0x01,
 ];
 
 pub async fn query(addr: Ipv4Addr, timeout: Duration) -> Option<NetbiosInfo> {

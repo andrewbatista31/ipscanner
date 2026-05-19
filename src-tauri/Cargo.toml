@@ -25,6 +25,8 @@ dns-lookup = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
 parking_lot = "0.12"
 futures = "0.3"
+tauri-plugin-dialog = "2"
+rust_xlsxwriter = "0.79"
 
 [profile.release]
 opt-level = 3

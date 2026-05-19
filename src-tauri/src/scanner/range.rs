@@ -10,7 +10,11 @@ use std::net::Ipv4Addr;
 ///   192.168.1.10-192.168.2.5 explicit range
 pub fn parse_targets(input: &str) -> Result<Vec<Ipv4Addr>, String> {
     let mut out: Vec<Ipv4Addr> = Vec::new();
-    for token in input.split([',', '\n', ';']).map(str::trim).filter(|s| !s.is_empty()) {
+    for token in input
+        .split([',', '\n', ';'])
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         if let Some((start, end)) = token.split_once('-') {
             let start_ip: Ipv4Addr = start
                 .trim()
@@ -100,7 +104,10 @@ mod tests {
     #[test]
     fn dedups_and_sorts() {
         let r = parse_targets("10.0.0.2, 10.0.0.1, 10.0.0.2").unwrap();
-        assert_eq!(r, vec![Ipv4Addr::new(10, 0, 0, 1), Ipv4Addr::new(10, 0, 0, 2)]);
+        assert_eq!(
+            r,
+            vec![Ipv4Addr::new(10, 0, 0, 1), Ipv4Addr::new(10, 0, 0, 2)]
+        );
     }
 
     #[test]

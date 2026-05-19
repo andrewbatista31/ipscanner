@@ -1,6 +1,8 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+  import { save } from "@tauri-apps/plugin-dialog";
+  import { openUrl } from "@tauri-apps/plugin-opener";
   import { onMount, onDestroy } from "svelte";
 
   type Liveness = "alive" | "dead" | "unknown";
@@ -111,19 +113,36 @@
     await invoke("cancel_scan", { scanId });
   }
 
-  function exportCsv() {
-    const header = "ip,liveness,rtt_ms,hostname,netbios_name,workgroup,open_ports";
-    const rows = filteredResults.map(
-      (r) =>
-        `${r.ip},${r.liveness},${r.rtt_ms ?? ""},${r.hostname ?? ""},${r.netbios?.name ?? ""},${r.netbios?.workgroup ?? ""},${r.open_ports.join(" ")}`,
-    );
-    const blob = new Blob([header + "\n" + rows.join("\n")], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `scan-${new Date().toISOString().replace(/[:.]/g, "-")}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+  async function exportXlsx() {
+    error = null;
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+    try {
+      const path = await save({
+        defaultPath: `scan-${stamp}.xlsx`,
+        filters: [{ name: "Excel workbook", extensions: ["xlsx"] }],
+      });
+      if (!path) return;
+      await invoke("export_xlsx", { path, results: filteredResults });
+    } catch (e) {
+      error = `Export failed: ${e}`;
+    }
+  }
+
+  function urlFor(r: ScanResult): string {
+    const ports = r.open_ports;
+    if (ports.includes(443)) return `https://${r.ip}`;
+    if (ports.includes(80)) return `http://${r.ip}`;
+    if (ports.includes(8443)) return `https://${r.ip}:8443`;
+    if (ports.includes(8080)) return `http://${r.ip}:8080`;
+    return `http://${r.ip}`;
+  }
+
+  async function openIp(r: ScanResult) {
+    try {
+      await openUrl(urlFor(r));
+    } catch (e) {
+      error = `Failed to open URL: ${e}`;
+    }
   }
 
   onMount(async () => {
@@ -277,10 +296,10 @@
       class="flex-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-1 text-sm outline-none focus:border-[var(--color-accent)]"
     />
     <button
-      onclick={exportCsv}
+      onclick={exportXlsx}
       disabled={results.length === 0}
       class="rounded-md border border-[var(--color-border)] px-3 py-1 text-sm hover:bg-[var(--color-panel-2)] disabled:opacity-40"
-    >Export CSV</button>
+    >Export Excel</button>
   </div>
 
   <!-- Results table -->
@@ -308,7 +327,18 @@
         <tbody>
           {#each filteredResults as r (r.ip)}
             <tr class="border-b border-[var(--color-border)]/50 hover:bg-[var(--color-panel-2)]">
-              <td class="px-4 py-1.5">{r.ip}</td>
+              <td class="px-4 py-1.5">
+                {#if r.liveness === "alive"}
+                  <button
+                    type="button"
+                    onclick={() => openIp(r)}
+                    title="Open {urlFor(r)} in browser"
+                    class="text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] hover:underline"
+                  >{r.ip}</button>
+                {:else}
+                  <span class="text-[var(--color-text-dim)]">{r.ip}</span>
+                {/if}
+              </td>
               <td class="px-4 py-1.5">
                 {#if r.liveness === "alive"}
                   <span class="inline-flex items-center gap-1.5 text-emerald-400">

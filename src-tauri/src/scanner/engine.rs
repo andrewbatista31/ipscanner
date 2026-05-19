@@ -132,7 +132,11 @@ async fn scan_one(
     };
 
     let liveness = if opts.ping {
-        if rtt.is_some() { Liveness::Alive } else { Liveness::Dead }
+        if rtt.is_some() {
+            Liveness::Alive
+        } else {
+            Liveness::Dead
+        }
     } else {
         Liveness::Unknown
     };
