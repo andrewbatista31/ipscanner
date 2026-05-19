@@ -45,7 +45,11 @@ pub fn start_scan(
     let opts = Arc::new(req.options);
     let app_clone = app.clone();
     let state_clone = state.clone();
-    tokio::spawn(async move {
+    // Tauri commands run on the main thread, which is NOT a Tokio runtime, so
+    // we spawn onto Tauri's managed Tokio runtime. Inside the task, ordinary
+    // tokio::spawn / tokio::net / tokio::time calls work normally because we
+    // are then in a Tokio context.
+    tauri::async_runtime::spawn(async move {
         let cancelled = run_scan(app_clone.clone(), scan_id, targets, opts, token.clone()).await;
         state_clone.active.lock().remove(&scan_id);
         let _ = app_clone.emit("scan-complete", ScanComplete { scan_id, cancelled });
