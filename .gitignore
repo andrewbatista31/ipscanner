@@ -8,3 +8,9 @@ node_modules
 !.env.example
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# Build artifacts and installers should be distributed via GitHub Releases,
+# never committed to the repo.
+*.exe
+*.msi
+
