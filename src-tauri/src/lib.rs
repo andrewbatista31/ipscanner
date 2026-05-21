@@ -13,6 +13,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::start_scan,
             commands::cancel_scan,
+            commands::rescan_host,
+            commands::get_local_subnet,
             commands::export_xlsx,
         ])
         .run(tauri::generate_context!())

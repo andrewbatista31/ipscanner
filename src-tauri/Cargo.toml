@@ -1,6 +1,6 @@
 [package]
 name = "ipscanner"
-version = "0.2.1"
+version = "0.3.0"
 description = "A modern IP scanner"
 authors = ["you"]
 edition = "2021"
@@ -27,6 +27,9 @@ parking_lot = "0.12"
 futures = "0.3"
 tauri-plugin-dialog = "2"
 rust_xlsxwriter = "0.79"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+if-addrs = "0.13"
+windows-sys = { version = "0.59", features = ["Win32_NetworkManagement_IpHelper", "Win32_Foundation"] }
 
 [profile.release]
 opt-level = 3

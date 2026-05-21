@@ -7,6 +7,11 @@
 
   type Liveness = "alive" | "dead" | "unknown";
   type NetbiosInfo = { name: string; workgroup: string | null };
+  type MacInfo = { mac: string; vendor: string | null };
+  type HttpBanner = { url: string; title: string | null; server: string | null; status: number };
+  type DeviceType =
+    | "router" | "switch" | "access-point" | "server" | "workstation"
+    | "printer" | "camera" | "iot" | "vm" | "mobile" | "unknown";
   type ScanResult = {
     scan_id: string;
     ip: string;
@@ -14,6 +19,9 @@
     rtt_ms: number | null;
     hostname: string | null;
     netbios: NetbiosInfo | null;
+    mac: MacInfo | null;
+    http_banner: HttpBanner | null;
+    device_type: DeviceType | null;
     open_ports: number[];
   };
   type ScanProgress = { scan_id: string; completed: number; total: number };
@@ -74,11 +82,95 @@
   let doPing = $state(true);
   let doDns = $state(true);
   let doNetbios = $state(true);
+  let doMac = $state(true);
+  let doHttpBanner = $state(false);
+  let doDeviceGuess = $state(true);
   let includeDead = $state(false);
   let concurrency = $state(100);
   let pingTimeout = $state(1000);
   let portTimeout = $state(500);
   let netbiosTimeout = $state(1000);
+  let httpTimeout = $state(2000);
+
+  // Whether each optional column is visible in the table. Tracks the toggle.
+  const showMacCol = $derived(doMac);
+  const showHttpCol = $derived(doHttpBanner);
+  const showDeviceCol = $derived(doDeviceGuess);
+
+  // Device-type display metadata
+  const DEVICE_META: Record<DeviceType, { label: string; emoji: string; color: string }> = {
+    "router":       { label: "Router",      emoji: "🌐", color: "var(--color-port-dns)" },
+    "switch":       { label: "Switch",      emoji: "🔀", color: "var(--color-port-remote)" },
+    "access-point": { label: "AP",          emoji: "📡", color: "var(--color-port-remote)" },
+    "server":       { label: "Server",      emoji: "🖥️", color: "var(--color-port-web)" },
+    "workstation":  { label: "Workstation", emoji: "💻", color: "var(--color-up)" },
+    "printer":      { label: "Printer",     emoji: "🖨️", color: "var(--color-port-file)" },
+    "camera":       { label: "Camera",      emoji: "📷", color: "var(--color-port-mail)" },
+    "iot":          { label: "IoT",         emoji: "💡", color: "var(--color-port-db)" },
+    "vm":           { label: "VM",          emoji: "📦", color: "var(--color-text-dim)" },
+    "mobile":       { label: "Mobile",      emoji: "📱", color: "var(--color-warning)" },
+    "unknown":      { label: "Unknown",     emoji: "❓", color: "var(--color-text-muted)" },
+  };
+
+  // --- Right-click context menu ---
+  let contextMenu = $state<{ x: number; y: number; row: ScanResult } | null>(null);
+
+  function openContextMenu(ev: MouseEvent, row: ScanResult) {
+    ev.preventDefault();
+    contextMenu = { x: ev.clientX, y: ev.clientY, row };
+  }
+  function closeContextMenu() {
+    contextMenu = null;
+  }
+  async function copyText(text: string) {
+    try { await navigator.clipboard.writeText(text); } catch { /* ignore */ }
+  }
+  function copyRowAsTsv(r: ScanResult) {
+    const cells = [
+      r.ip,
+      r.liveness,
+      r.device_type ?? "",
+      r.rtt_ms != null ? `${r.rtt_ms} ms` : "",
+      r.hostname ?? "",
+      r.netbios?.name ?? "",
+      r.mac?.mac ?? "",
+      r.mac?.vendor ?? "",
+      r.http_banner?.title ?? "",
+      r.http_banner?.server ?? "",
+      r.open_ports.join(" "),
+    ];
+    return copyText(cells.join("\t"));
+  }
+  async function rescanRow(r: ScanResult) {
+    try {
+      const updated = await invoke<ScanResult>("rescan_host", {
+        ip: r.ip,
+        options: buildScanOptions(),
+      });
+      const idx = results.findIndex((x) => x.ip === r.ip);
+      if (idx >= 0) results[idx] = updated;
+    } catch (e) {
+      error = `Rescan failed: ${e}`;
+    }
+  }
+
+  function buildScanOptions() {
+    return {
+      ping: doPing,
+      resolve_hostname: doDns,
+      netbios: doNetbios,
+      mac: doMac,
+      http_banner: doHttpBanner,
+      device_guess: doDeviceGuess,
+      ports: parsePorts(),
+      ping_timeout_ms: pingTimeout,
+      port_timeout_ms: portTimeout,
+      netbios_timeout_ms: netbiosTimeout,
+      http_timeout_ms: httpTimeout,
+      concurrency,
+      include_dead: includeDead,
+    };
+  }
 
   let scanId = $state<string | null>(null);
   let results = $state<ScanResult[]>([]);
@@ -126,7 +218,7 @@
   }
 
   // --- Sort state ---
-  type SortKey = "ip" | "status" | "rtt" | "hostname" | "netbios" | "ports";
+  type SortKey = "ip" | "status" | "device" | "rtt" | "hostname" | "netbios" | "mac" | "banner" | "ports";
   let sortKey = $state<SortKey | null>(null);
   let sortDir = $state<"asc" | "desc">("asc");
 
@@ -137,13 +229,22 @@
   function livenessRank(l: Liveness): number {
     return l === "alive" ? 0 : l === "unknown" ? 1 : 2;
   }
+  function deviceRank(d: DeviceType | null): number {
+    if (!d) return 99;
+    const order: DeviceType[] = ["router","switch","access-point","server","workstation","printer","camera","iot","vm","mobile","unknown"];
+    const i = order.indexOf(d);
+    return i < 0 ? 99 : i;
+  }
   function compareBy(a: ScanResult, b: ScanResult, key: SortKey): number {
     switch (key) {
       case "ip":       return ipToNum(a.ip) - ipToNum(b.ip);
       case "status":   return livenessRank(a.liveness) - livenessRank(b.liveness);
+      case "device":   return deviceRank(a.device_type) - deviceRank(b.device_type);
       case "rtt":      return (a.rtt_ms ?? Infinity) - (b.rtt_ms ?? Infinity);
       case "hostname": return (a.hostname ?? "").localeCompare(b.hostname ?? "");
       case "netbios":  return (a.netbios?.name ?? "").localeCompare(b.netbios?.name ?? "");
+      case "mac":      return (a.mac?.vendor ?? a.mac?.mac ?? "").localeCompare(b.mac?.vendor ?? b.mac?.mac ?? "");
+      case "banner":   return (a.http_banner?.title ?? a.http_banner?.server ?? "").localeCompare(b.http_banner?.title ?? b.http_banner?.server ?? "");
       case "ports":    return b.open_ports.length - a.open_ports.length;
     }
   }
@@ -209,17 +310,7 @@
     try {
       const id = await invoke<string>("start_scan", {
         targets,
-        options: {
-          ping: doPing,
-          resolve_hostname: doDns,
-          netbios: doNetbios,
-          ports: parsePorts(),
-          ping_timeout_ms: pingTimeout,
-          port_timeout_ms: portTimeout,
-          netbios_timeout_ms: netbiosTimeout,
-          concurrency,
-          include_dead: includeDead,
-        },
+        options: buildScanOptions(),
       });
       scanId = id;
     } catch (e) {
@@ -249,6 +340,8 @@
   }
 
   function urlFor(r: ScanResult): string {
+    // If we already grabbed an HTTP banner we know exactly which URL worked.
+    if (r.http_banner?.url) return r.http_banner.url;
     const ports = r.open_ports;
     if (ports.includes(443)) return `https://${r.ip}`;
     if (ports.includes(80)) return `http://${r.ip}`;
@@ -267,6 +360,14 @@
 
   onMount(async () => {
     loadSavedFromStorage();
+    // Auto-detect local subnet on first launch (only if user hasn't changed
+    // the default target value yet).
+    if (targets === "192.168.1.0/24") {
+      try {
+        const detected = await invoke<string | null>("get_local_subnet");
+        if (detected) targets = detected;
+      } catch { /* ignore */ }
+    }
     unlisteners.push(
       await listen<ScanStarted>("scan-started", (e) => {
         total = e.payload.total;
@@ -316,6 +417,8 @@
   />
 </svelte:head>
 
+<svelte:window oncontextmenu={(e) => { if (!(e.target as HTMLElement)?.closest('tbody tr')) e.preventDefault(); }} />
+
 <div class="grid h-screen grid-cols-[320px_1fr] grid-rows-[1fr] overflow-hidden">
   <!-- ============ SIDEBAR ============ -->
   <aside class="flex flex-col overflow-hidden border-r border-[var(--color-border)] bg-[var(--color-panel)]">
@@ -337,7 +440,7 @@
       </div>
       <div class="flex-1">
         <div class="font-semibold leading-tight">ipscanner</div>
-        <div class="font-mono text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">v0.2.1</div>
+        <div class="font-mono text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">v0.3.0</div>
       </div>
     </header>
 
@@ -429,6 +532,18 @@
           <span>NetBIOS</span>
           <input type="checkbox" class="check" bind:checked={doNetbios} disabled={isScanning} />
         </label>
+        <label class="toggle-row" title="Resolves MAC via ARP and looks up the vendor from the OUI prefix.">
+          <span>MAC + vendor</span>
+          <input type="checkbox" class="check" bind:checked={doMac} disabled={isScanning} />
+        </label>
+        <label class="toggle-row" title="Fetches the HTTP/HTTPS banner (page title + Server header) from any host with port 80/443/8080/8443 open.">
+          <span>HTTP banner</span>
+          <input type="checkbox" class="check" bind:checked={doHttpBanner} disabled={isScanning} />
+        </label>
+        <label class="toggle-row" title="Synthesizes vendor, ports, banner, and NetBIOS into a device-type guess (Server, Switch, Printer, etc.).">
+          <span>Device type</span>
+          <input type="checkbox" class="check" bind:checked={doDeviceGuess} disabled={isScanning} />
+        </label>
         <label class="toggle-row">
           <span>Show dead hosts</span>
           <input type="checkbox" class="check" bind:checked={includeDead} disabled={isScanning} />
@@ -454,6 +569,10 @@
           <label class="space-y-1">
             <span class="text-[11px] text-[var(--color-text-dim)]">NetBIOS ms</span>
             <input type="number" bind:value={netbiosTimeout} min="100" max="10000" step="100" class="input-base w-full" disabled={isScanning} />
+          </label>
+          <label class="space-y-1">
+            <span class="text-[11px] text-[var(--color-text-dim)]">HTTP ms</span>
+            <input type="number" bind:value={httpTimeout} min="500" max="30000" step="500" class="input-base w-full" disabled={isScanning} />
           </label>
         </div>
       </section>
@@ -642,15 +761,21 @@
               {/snippet}
               {@render sortableTh("ip", "IP address", "left", "pl-6")}
               {@render sortableTh("status", "Status")}
+              {#if showDeviceCol}{@render sortableTh("device", "Device")}{/if}
               {@render sortableTh("rtt", "RTT", "right")}
               {@render sortableTh("hostname", "Hostname")}
               {@render sortableTh("netbios", "NetBIOS")}
+              {#if showMacCol}{@render sortableTh("mac", "MAC / Vendor")}{/if}
+              {#if showHttpCol}{@render sortableTh("banner", "HTTP banner")}{/if}
               {@render sortableTh("ports", "Open ports")}
             </tr>
           </thead>
           <tbody class="font-mono">
             {#each displayedResults as r (r.ip)}
-              <tr class="group border-b border-[var(--color-border)]/40 transition-colors hover:bg-[var(--color-panel-2)]">
+              <tr
+                class="group border-b border-[var(--color-border)]/40 transition-colors hover:bg-[var(--color-panel-2)]"
+                oncontextmenu={(e) => openContextMenu(e, r)}
+              >
                 <td class="px-6 py-2">
                   {#if r.liveness === "alive"}
                     <button
@@ -680,6 +805,24 @@
                     <span class="text-[11px] text-[var(--color-warning)]">Unknown</span>
                   {/if}
                 </td>
+                {#if showDeviceCol}
+                  <td class="px-3 py-2">
+                    {#if r.device_type && r.device_type !== "unknown"}
+                      {@const dm = DEVICE_META[r.device_type]}
+                      <span
+                        class="inline-flex items-center gap-1.5 rounded border px-1.5 py-0.5 text-[11px]"
+                        style="color: {dm.color}; border-color: {dm.color}40; background: {dm.color}10;"
+                      >
+                        <span class="font-sans">{dm.emoji}</span>
+                        <span class="font-sans font-medium">{dm.label}</span>
+                      </span>
+                    {:else if r.device_type === "unknown"}
+                      <span class="text-[11px] text-[var(--color-text-muted)]">unknown</span>
+                    {:else}
+                      <span class="text-[var(--color-text-muted)]">—</span>
+                    {/if}
+                  </td>
+                {/if}
                 <td class="px-3 py-2 text-right text-[var(--color-text-dim)] tabular-nums">{r.rtt_ms != null ? `${r.rtt_ms} ms` : "—"}</td>
                 <td class="px-3 py-2 text-[var(--color-text)]">{r.hostname ?? "—"}</td>
                 <td class="px-3 py-2">
@@ -692,6 +835,32 @@
                     <span class="text-[var(--color-text-muted)]">—</span>
                   {/if}
                 </td>
+                {#if showMacCol}
+                  <td class="px-3 py-2">
+                    {#if r.mac}
+                      <span class="text-[var(--color-text)]">{r.mac.mac}</span>
+                      {#if r.mac.vendor}
+                        <span class="ml-1.5 font-sans text-[11px] text-[var(--color-text-dim)]">{r.mac.vendor}</span>
+                      {/if}
+                    {:else}
+                      <span class="text-[var(--color-text-muted)]">—</span>
+                    {/if}
+                  </td>
+                {/if}
+                {#if showHttpCol}
+                  <td class="px-3 py-2 max-w-[260px]">
+                    {#if r.http_banner}
+                      <div class="truncate font-sans text-[var(--color-text)]" title={r.http_banner.title ?? r.http_banner.url}>
+                        {r.http_banner.title ?? "(no title)"}
+                      </div>
+                      {#if r.http_banner.server}
+                        <div class="truncate text-[11px] text-[var(--color-text-muted)]" title={r.http_banner.server}>{r.http_banner.server}</div>
+                      {/if}
+                    {:else}
+                      <span class="text-[var(--color-text-muted)]">—</span>
+                    {/if}
+                  </td>
+                {/if}
                 <td class="px-3 py-2">
                   {#if r.open_ports.length > 0}
                     <div class="flex flex-wrap gap-1">
@@ -719,3 +888,59 @@
     </div>
   </main>
 </div>
+
+<!-- Right-click context menu -->
+{#if contextMenu}
+  {@const cm = contextMenu}
+  <!-- svelte-ignore a11y_click_events_have_key_events -->
+  <div
+    role="presentation"
+    class="fixed inset-0 z-40"
+    onclick={closeContextMenu}
+    oncontextmenu={(e) => { e.preventDefault(); closeContextMenu(); }}
+  ></div>
+  <div
+    role="menu"
+    class="fixed z-50 min-w-[200px] overflow-hidden rounded-md border border-[var(--color-border-bright)] bg-[var(--color-panel-2)] py-1 text-sm shadow-2xl"
+    style="left: {Math.min(cm.x, window.innerWidth - 220)}px; top: {Math.min(cm.y, window.innerHeight - 240)}px;"
+  >
+    <div class="border-b border-[var(--color-border)] px-3 py-1.5 font-mono text-xs text-[var(--color-text-dim)]">{cm.row.ip}</div>
+    {#if cm.row.liveness === "alive"}
+      <button
+        type="button"
+        class="flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-[var(--color-accent-soft)] hover:text-[var(--color-accent-bright)]"
+        onclick={() => { openIp(cm.row); closeContextMenu(); }}
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17 17 7"/><path d="M7 7h10v10"/></svg>
+        Open in browser
+      </button>
+      <div class="my-1 border-b border-[var(--color-border)]"></div>
+    {/if}
+    <button
+      type="button"
+      class="flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-[var(--color-panel-3)]"
+      onclick={() => { copyText(cm.row.ip); closeContextMenu(); }}
+    >
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+      Copy IP
+    </button>
+    <button
+      type="button"
+      class="flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-[var(--color-panel-3)]"
+      onclick={() => { copyRowAsTsv(cm.row); closeContextMenu(); }}
+    >
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+      Copy row (TSV)
+    </button>
+    <div class="my-1 border-b border-[var(--color-border)]"></div>
+    <button
+      type="button"
+      class="flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-[var(--color-panel-3)]"
+      onclick={() => { rescanRow(cm.row); closeContextMenu(); }}
+      disabled={isScanning}
+    >
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+      Rescan this host
+    </button>
+  </div>
+{/if}

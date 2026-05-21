@@ -1,4 +1,5 @@
-use crate::scanner::fetchers::{dns, netbios, ping, port};
+use crate::scanner::device;
+use crate::scanner::fetchers::{dns, http, mac, netbios, ping, port};
 use crate::scanner::range;
 use crate::scanner::types::*;
 use futures::stream::{FuturesUnordered, StreamExt};
@@ -39,16 +40,11 @@ pub fn start_scan(
     let token = CancellationToken::new();
     state.active.lock().insert(scan_id, token.clone());
 
-    // Notify the UI that the scan is starting.
     let _ = app.emit("scan-started", ScanStarted { scan_id, total });
 
     let opts = Arc::new(req.options);
     let app_clone = app.clone();
     let state_clone = state.clone();
-    // Tauri commands run on the main thread, which is NOT a Tokio runtime, so
-    // we spawn onto Tauri's managed Tokio runtime. Inside the task, ordinary
-    // tokio::spawn / tokio::net / tokio::time calls work normally because we
-    // are then in a Tokio context.
     tauri::async_runtime::spawn(async move {
         let cancelled = run_scan(app_clone.clone(), scan_id, targets, opts, token.clone()).await;
         state_clone.active.lock().remove(&scan_id);
@@ -92,7 +88,6 @@ async fn run_scan(
     loop {
         tokio::select! {
             _ = token.cancelled() => {
-                // Drop remaining task handles — workers will see the token and exit.
                 return true;
             }
             next = tasks.next() => {
@@ -112,7 +107,9 @@ async fn run_scan(
     false
 }
 
-async fn scan_one(
+/// Run all enabled fetchers for a single host. Used both by the bulk scan
+/// engine and by the `rescan_host` command.
+pub async fn scan_one(
     ip: Ipv4Addr,
     scan_id: Uuid,
     opts: &ScanOptions,
@@ -121,7 +118,9 @@ async fn scan_one(
     let ping_to = Duration::from_millis(opts.ping_timeout_ms as u64);
     let port_to = Duration::from_millis(opts.port_timeout_ms as u64);
     let netbios_to = Duration::from_millis(opts.netbios_timeout_ms as u64);
+    let http_to = Duration::from_millis(opts.http_timeout_ms as u64);
 
+    // --- Phase 1: liveness via ping
     let rtt = if opts.ping {
         tokio::select! {
             _ = token.cancelled() => None,
@@ -130,34 +129,22 @@ async fn scan_one(
     } else {
         None
     };
-
     let liveness = if opts.ping {
-        if rtt.is_some() {
-            Liveness::Alive
-        } else {
-            Liveness::Dead
-        }
+        if rtt.is_some() { Liveness::Alive } else { Liveness::Dead }
     } else {
         Liveness::Unknown
     };
-
-    // If ping says dead, skip the rest unless the user wants dead hosts too.
     let do_followup = liveness != Liveness::Dead || opts.include_dead || !opts.ping;
 
-    // Run follow-up fetchers concurrently — they all use the network independently.
+    // --- Phase 2: parallel hostname / NetBIOS / MAC / port probe
     let hostname_fut = async {
-        if opts.resolve_hostname && do_followup {
-            dns::reverse_lookup(ip).await
-        } else {
-            None
-        }
+        if opts.resolve_hostname && do_followup { dns::reverse_lookup(ip).await } else { None }
     };
     let netbios_fut = async {
-        if opts.netbios && do_followup {
-            netbios::query(ip, netbios_to).await
-        } else {
-            None
-        }
+        if opts.netbios && do_followup { netbios::query(ip, netbios_to).await } else { None }
+    };
+    let mac_fut = async {
+        if opts.mac && do_followup { mac::query(ip).await } else { None }
     };
     let ports_fut = async {
         if !opts.ports.is_empty() && do_followup {
@@ -167,9 +154,31 @@ async fn scan_one(
         }
     };
 
-    let (hostname, nb, open_ports) = tokio::select! {
-        _ = token.cancelled() => (None, None, Vec::new()),
-        out = async { tokio::join!(hostname_fut, netbios_fut, ports_fut) } => out,
+    let (hostname, nb, mac_info, open_ports) = tokio::select! {
+        _ = token.cancelled() => (None, None, None, Vec::new()),
+        out = async { tokio::join!(hostname_fut, netbios_fut, mac_fut, ports_fut) } => out,
+    };
+
+    // --- Phase 3: HTTP banner (depends on which ports are open)
+    let http_banner = if opts.http_banner && do_followup && !open_ports.is_empty() {
+        tokio::select! {
+            _ = token.cancelled() => None,
+            b = http::fetch(ip, &open_ports, http_to) => b,
+        }
+    } else {
+        None
+    };
+
+    // --- Phase 4: device guess (synthesizes all signals)
+    let device_type = if opts.device_guess && do_followup {
+        Some(device::guess(
+            mac_info.as_ref().and_then(|m| m.vendor.as_deref()),
+            &open_ports,
+            http_banner.as_ref(),
+            nb.as_ref(),
+        ))
+    } else {
+        None
     };
 
     ScanResult {
@@ -179,6 +188,9 @@ async fn scan_one(
         rtt_ms: rtt,
         hostname,
         netbios: nb,
+        mac: mac_info,
+        http_banner,
+        device_type,
         open_ports,
     }
 }

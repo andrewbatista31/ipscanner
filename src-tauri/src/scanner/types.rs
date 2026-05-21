@@ -1,3 +1,6 @@
+use crate::scanner::device::DeviceType;
+use crate::scanner::fetchers::http::HttpBanner;
+use crate::scanner::fetchers::mac::MacInfo;
 use crate::scanner::fetchers::netbios::NetbiosInfo;
 use serde::{Deserialize, Serialize};
 use std::net::Ipv4Addr;
@@ -8,10 +11,14 @@ pub struct ScanOptions {
     pub ping: bool,
     pub resolve_hostname: bool,
     pub netbios: bool,
+    pub mac: bool,
+    pub http_banner: bool,
+    pub device_guess: bool,
     pub ports: Vec<u16>,
     pub ping_timeout_ms: u32,
     pub port_timeout_ms: u32,
     pub netbios_timeout_ms: u32,
+    pub http_timeout_ms: u32,
     pub concurrency: usize,
     pub include_dead: bool,
 }
@@ -22,10 +29,14 @@ impl Default for ScanOptions {
             ping: true,
             resolve_hostname: true,
             netbios: true,
+            mac: true,
+            http_banner: false, // off by default — it's slower and noisier
+            device_guess: true,
             ports: vec![],
             ping_timeout_ms: 1000,
             port_timeout_ms: 500,
             netbios_timeout_ms: 1000,
+            http_timeout_ms: 2000,
             concurrency: 100,
             include_dead: false,
         }
@@ -54,6 +65,9 @@ pub struct ScanResult {
     pub rtt_ms: Option<u32>,
     pub hostname: Option<String>,
     pub netbios: Option<NetbiosInfo>,
+    pub mac: Option<MacInfo>,
+    pub http_banner: Option<HttpBanner>,
+    pub device_type: Option<DeviceType>,
     pub open_ports: Vec<u16>,
 }
 
