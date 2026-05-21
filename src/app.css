@@ -1,19 +1,46 @@
 @import "tailwindcss";
 
 @theme {
-  --color-bg: #0b0d12;
-  --color-panel: #141821;
-  --color-panel-2: #1a1f2b;
-  --color-border: #232938;
-  --color-text: #e6e9ef;
-  --color-text-dim: #9aa3b2;
-  --color-accent: #4f8cff;
-  --color-accent-hover: #6ba0ff;
+  /* Surfaces — three depths so we can stack panels visually */
+  --color-bg: #07090e;
+  --color-panel: #0e1218;
+  --color-panel-2: #161b24;
+  --color-panel-3: #1c2230;
+
+  /* Borders */
+  --color-border: #1c222d;
+  --color-border-bright: #2a3142;
+
+  /* Text */
+  --color-text: #e7ebf1;
+  --color-text-dim: #8b94a3;
+  --color-text-muted: #5b6473;
+
+  /* Brand accent — cyan/azure */
+  --color-accent: #22d3ee;
+  --color-accent-bright: #67e8f9;
+  --color-accent-soft: rgba(34, 211, 238, 0.12);
+  --color-accent-glow: rgba(34, 211, 238, 0.35);
+
+  /* Semantic */
   --color-up: #34d399;
-  --color-down: #6b7280;
-  --color-warn: #fbbf24;
-  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --font-mono: ui-monospace, "Cascadia Code", "Fira Code", Consolas, monospace;
+  --color-up-bg: rgba(52, 211, 153, 0.12);
+  --color-down: #525c6b;
+  --color-danger: #f87171;
+  --color-danger-bg: rgba(248, 113, 113, 0.12);
+  --color-warning: #fbbf24;
+
+  /* Port category colors */
+  --color-port-web: #60a5fa;
+  --color-port-remote: #a78bfa;
+  --color-port-file: #fbbf24;
+  --color-port-db: #f472b6;
+  --color-port-mail: #34d399;
+  --color-port-dns: #5eead4;
+  --color-port-other: #94a3b8;
+
+  --font-sans: "Inter", "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Code", "Consolas", ui-monospace, monospace;
 }
 
 html, body {
@@ -21,9 +48,116 @@ html, body {
   background: var(--color-bg);
   color: var(--color-text);
   font-family: var(--font-sans);
+  font-feature-settings: "ss01", "cv11";
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Subtle ambient glow behind the brand area to give the app personality */
+body {
+  background-image:
+    radial-gradient(900px circle at 12% -10%, rgba(34, 211, 238, 0.05), transparent 50%),
+    radial-gradient(700px circle at 95% 100%, rgba(167, 139, 250, 0.03), transparent 50%);
+  background-attachment: fixed;
 }
 
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #2a3142; border-radius: 6px; }
-::-webkit-scrollbar-thumb:hover { background: #3a4358; }
+::-webkit-scrollbar-thumb { background: #232a38; border-radius: 6px; }
+::-webkit-scrollbar-thumb:hover { background: #2f3849; }
+
+/* ---------- Custom utilities ---------- */
+
+/* Pulse ring under the live status dot while scanning */
+@keyframes pulse-ring {
+  0%   { box-shadow: 0 0 0 0 var(--color-accent-glow); }
+  70%  { box-shadow: 0 0 0 10px rgba(34, 211, 238, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(34, 211, 238, 0); }
+}
+.pulse-ring { animation: pulse-ring 1.8s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+
+/* Shimmer on the progress bar */
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.shimmer {
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.25) 50%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.8s linear infinite;
+}
+
+/* Stat card hover lift */
+.lift { transition: transform 150ms ease, border-color 150ms ease, background 150ms ease; }
+.lift:hover { transform: translateY(-1px); border-color: var(--color-border-bright); }
+
+/* Polished focus ring */
+*:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+  border-radius: 4px;
+}
+
+/* Inputs share a base look */
+.input-base {
+  background: var(--color-panel-2);
+  border: 1px solid var(--color-border);
+  color: var(--color-text);
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+  font-family: var(--font-mono);
+  font-size: 0.825rem;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+.input-base::placeholder { color: var(--color-text-muted); }
+.input-base:hover { border-color: var(--color-border-bright); }
+.input-base:focus { outline: none; border-color: var(--color-accent); background: var(--color-panel-3); }
+.input-base:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Toggle row */
+.toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.4rem 0;
+  font-size: 0.8125rem;
+  color: var(--color-text);
+}
+
+/* Custom checkbox */
+.check {
+  appearance: none;
+  width: 32px;
+  height: 18px;
+  background: var(--color-panel-3);
+  border: 1px solid var(--color-border);
+  border-radius: 9999px;
+  cursor: pointer;
+  position: relative;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.check::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 9999px;
+  background: var(--color-text-dim);
+  transition: transform 140ms ease, background 140ms ease;
+}
+.check:checked {
+  background: var(--color-accent-soft);
+  border-color: var(--color-accent);
+}
+.check:checked::after {
+  transform: translateX(14px);
+  background: var(--color-accent);
+}
+.check:disabled { opacity: 0.5; cursor: not-allowed; }
